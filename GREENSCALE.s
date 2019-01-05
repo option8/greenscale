@@ -2,6 +2,13 @@
 
 **************************************************
 * Low res monochrome image display
+*
+*	to do:
+*		detect virtualII vs openemu or real hardware
+*		(or other emulator)
+*
+*		further optimization, to speed up framerate
+*
 **************************************************
 * Variables
 **************************************************
@@ -15,9 +22,6 @@ CHAR			EQU		$FD			; byte at PLOTROW,PLOTCOLUMN
 
 PLOTROW			EQU		$FE			; row in text page = ROW/2, remainder = nibble
 PLOTCOLUMN		EQU		$FF			; col in text page == COLUMN
-
-RNDSEED			EQU		$EA			; +eb +ec
-
 
 IMGHI			EQU		$CE			; image data addres, HI
 IMGLO			EQU		$CD			; image data addres, LO
@@ -102,17 +106,16 @@ END				STA STROBE
 
 **************************************************
 *	MAIN LOOP
-*	waits for keyboard input
 **************************************************
 
 MAIN		
-				LDA #$40
+				LDA #$40			; image data starts at $4000
 				STA IMGHI
 				LDA #$00
 				STA IMGLO
-				STA FRAMENUM
+				STA FRAMENUM		; frame #0
 
-NEXTFRAME		LDA #$00
+NEXTFRAME		LDA #$00			
 				STA PLOTROW
 				TAY					; Y IS PLOTCOLUMN
 MAINLOOP
@@ -127,14 +130,14 @@ PLOTCHAR
 				LDA LoLineTableL,X
 				STA $0
 				LDA LoLineTableH,X
-				STA $1       		  		; now word/pointer at $0+$1 points to line 
+				STA $1       		; now word/pointer at $0+$1 points to screen line 
 LOADQUICK		
 				LDA CHAR
-				STA ($0),Y  
+				STA ($0),Y  		; store byte at LINE + COLUMN
 				
 				INC IMGLO			; increment IMGLO
-				BNE INCCOLUMN		; if IMGLO == 0
-				INC IMGHI			; increment IMGHI
+				BNE INCCOLUMN		; not rolled over, skip
+				INC IMGHI			; if IMGLO == 0 increment IMGHI
 
 INCCOLUMN							; next column of 2 pixels
 				INY					; Y IS PLOTCOLUMN
@@ -148,7 +151,7 @@ INCROW			INC PLOTROW
 
 LOOPTY			INC FRAMENUM
 				LDA FRAMENUM
-				CMP #$08
+				CMP #$08			; *** how many frames? ***
 				BEQ MAIN
 				JMP NEXTFRAME		; wait for input...				
 
@@ -156,6 +159,11 @@ LOOPTY			INC FRAMENUM
 
 **************************************************
 * Data Tables
+*
+* I was looking up each nibble, then converting 
+* the two nibbles to a full byte, but it's 
+* considerably faster to lookup a full byte at
+* a time, skipping manipulating nibbles.
 *
 **************************************************
 
