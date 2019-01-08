@@ -6,5 +6,5 @@ convert frame*.gif -compress none -scale 56x100%  -scale 40x48\! -colorspace Gra
 
 for file in *.gray
 do
-	cat "$file" | python -u ../greenscale.py >> output.bin
+	cat "$file" | python -u ../greenscale.py >> data.bin
 done
