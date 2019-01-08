@@ -4,11 +4,8 @@
 * Low res monochrome image display
 *
 *	to do:
-*		detect virtualII vs openemu or real hardware
-*		(or other emulator)
-*
 *		further optimization, to speed up framerate
-*
+*		determine frame length from data length
 **************************************************
 * Variables
 **************************************************
@@ -27,6 +24,7 @@ IMGHI			EQU		$CE			; image data addres, HI
 IMGLO			EQU		$CD			; image data addres, LO
 
 FRAMENUM		EQU		$1D			; which frame of the anim
+FRAMES			EQU		$1E			; total frames
 
 **************************************************
 * Apple Standard Memory Locations
@@ -51,7 +49,7 @@ RAMWRTMAIN	EQU	$C004
 SETAN3    	EQU	$C05E       ;Set annunciator-3 output to 0
 SET80VID  	EQU	$C00D       ;enable 80-column display mode (WR-only)
 CLR80VID	EQU	$C00C
-HOME 		EQU	$FC58			; clear the text screen
+HOME 		EQU	$FC58		; clear the text screen
 CH        	EQU	$24			; cursor Horiz
 CV        	EQU	$25			; cursor Vert
 VTAB      	EQU	$FC22       ; Sets the cursor vertical position (from CV)
@@ -62,14 +60,22 @@ STROUT		EQU	$DB3A 		;Y=String ptr high, A=String ptr low
 ALTTEXT		EQU	$C055
 ALTTEXTOFF	EQU	$C054
 	
-ROMINIT   	EQU    $FB2F
-ROMSETKBD 	EQU    $FE89
-ROMSETVID 	EQU    $FE93
+ROMINIT   	EQU $FB2F
+ROMSETKBD 	EQU $FE89
+ROMSETVID 	EQU $FE93
 	
-ALTCHAR		EQU		$C00F		; enables alternative character set - mousetext
+ALTCHAR		EQU	$C00F		; enables alternative character set - mousetext
 	
-BLINK		EQU		$F3
-SPEED		EQU		$F1
+BLINK		EQU	$F3
+SPEED		EQU	$F1
+
+BELL   		EQU	$FF3A     				; Monitor BELL routine
+CROUT  		EQU	$FD8E     				; Monitor CROUT routine
+PRBYTE 		EQU	$FDDA     				; Monitor PRBYTE routine
+MLI    		EQU	$BF00     				; ProDOS system call
+OPENCMD		EQU	$C8						; OPEN command index
+READCMD		EQU	$CA						; READ command index
+CLOSECMD	EQU	$CC						; CLOSE command index
 
 
 **************************************************
@@ -77,6 +83,10 @@ SPEED		EQU		$F1
 **************************************************
 
 				ORG $2000						; PROGRAM DATA STARTS AT $2000
+
+				JSR BLOAD						; BLOAD DATA
+					
+				JSR HOWMANYFRAMES				; how big is the animation data?
 
 				JSR ROMSETVID           	 	; Init char output hook at $36/$37
 				JSR ROMSETKBD           	 	; Init key input hook at $38/$39
@@ -94,35 +104,35 @@ SPEED		EQU		$F1
 
 				JSR CLRLORES					; clear screen		
 				
-				JMP MAIN
-
-END				STA STROBE
-				STA ALTTEXTOFF
-				STA TXTSET
-				JSR HOME
-				RTS						; END	
-
-
+				
+				JSR EMULATORCHECK				; check for Virtual II
+				
+				JMP MAIN						; running in VII, go ahead.
+												
+				JSR COLORSWAP					; otherwise, swap the color table 
+												*** to do
+				
 
 **************************************************
 *	MAIN LOOP
 **************************************************
 
 MAIN		
-				LDA #$40			; image data starts at $4000
+				LDA DATAHI			; image data starts at end of code.
 				STA IMGHI
-				LDA #$00
+				LDA DATALO
 				STA IMGLO
+				LDA #$0
 				STA FRAMENUM		; frame #0
 
 NEXTFRAME		LDA #$00			
 				STA PLOTROW
-				TAY					; Y IS PLOTCOLUMN
+				LDY #$27			; Y IS PLOTCOLUMN
 MAINLOOP
-				LDA (IMGLO)			; load byte at IMGLO,IMGHI									
+				LDA (IMGLO),Y		; load byte at IMGLO,IMGHI + COLUMN							
 									; look up color from lookup table
 				TAX				
-				LDA COLORTABLEV2,X
+				LDA COLORTABLE,X
 				STA CHAR			; put that converted BYTE into CHAR	
 				
 PLOTCHAR
@@ -135,27 +145,137 @@ LOADQUICK
 				LDA CHAR
 				STA ($0),Y  		; store byte at LINE + COLUMN
 				
-				INC IMGLO			; increment IMGLO
-				BNE INCCOLUMN		; not rolled over, skip
-				INC IMGHI			; if IMGLO == 0 increment IMGHI
-
 INCCOLUMN							; next column of 2 pixels
-				INY					; Y IS PLOTCOLUMN
-				CPY #$28			; loop at col 40
-				BNE MAINLOOP		
-				LDY #$0				; reset to col 0
+				DEY					; Y IS PLOTCOLUMN
+				BPL MAINLOOP		
+				LDY #$27			; reset to col 0
 INCROW			INC PLOTROW
-				LDA PLOTROW
+				LDA IMGLO
+				CLC
+				ADC #$28
+				STA IMGLO
+				BCS INCHI
+
+CMPROW			LDA PLOTROW
 				CMP #$18
 				BNE MAINLOOP
 
 LOOPTY			INC FRAMENUM
 				LDA FRAMENUM
-				CMP #$08			; *** how many frames? ***
-				BEQ MAIN
-				JMP NEXTFRAME		; wait for input...				
+				CMP FRAMES			; *** how many frames? ***
+				BEQ MAIN			; start over at frame 1
+				JMP NEXTFRAME		; next frame in sequence
 
+INCHI 			INC IMGHI
+				BCS CMPROW
+
+	
+**************************************************
+*	Check to see if I'm running in Virtual II or
+*	real hardware (or a different emulator)
+*	CARRY SET == running in VII
+**************************************************
+	
+EMULATORCHECK	
+				LDX #$00
+				CLC
+CHKVII
+				INX
+				BEQ FOUNDVII
+				LDA $C04F
+				BEQ CHKVII
+				CLC 				;set return value: no Virtual II
+				RTS
+FOUNDVII
+    			SEC 				;set return value: found Virtual II
+    			RTS	
+	
+	
+**************************************************
+*	Swap the color table with one for real
+*	hardware/OpenEmulator
+**************************************************
+
+COLORSWAP	
+				LDX #$00
+SWAPLOOP		LDA ALTCOLORTABLE,X
+				STA COLORTABLE,X
+				INX
+				BNE SWAPLOOP
+				RTS
 			   
+**************************************************
+*	Load "banana" into memory
+*	
+**************************************************
+
+
+BLOAD   		JSR	OPEN    				;open "DATA"
+       			JSR READ
+       			JSR ERROR					
+				JSR CLOSE
+       			JSR ERROR					
+       			RTS            				;Otherwise done
+				
+OPEN 			JSR	MLI       				;Perform call
+       			DB	OPENCMD    				;CREATE command number
+       			DW	OPENLIST   				;Pointer to parameter list
+       			JSR	ERROR     				;If error, display it
+       			LDA REFERENCE
+       			STA READLIST+1
+       			STA CLOSELIST+1
+       			RTS				
+
+READ			JSR MLI
+				DB	READCMD
+				DW	READLIST
+				RTS
+
+CLOSE			JSR MLI
+				DB	CLOSECMD
+				DW	CLOSELIST
+				RTS
+				
+ERROR  			JSR	PRBYTE    				;Print error code
+       			JSR	BELL      				;Ring the bell
+       			JSR	CROUT     				;Print a carriage return
+       			RTS				
+
+OPENLIST		DB	$03						; parameter list for OPEN command
+				DW	FILENAME
+				DB	$00,$08					; buffer at $800 ?
+REFERENCE		DB	$00						; reference to opened file
+			
+READLIST		DB	$04
+				DB	$00						; REFERENCE written here after OPEN
+				DB	<BEGINDATA,>BEGINDATA	; write to end of code
+				DB	$FF,$FF					; read as much as $FFFF - should error out with EOF before that.
+TRANSFERRED		DB	$00,$00				
+
+CLOSELIST		DB	$01
+				DB	$00
+				
+FILENAME		DB	ENDNAME-NAME 			;Length of name
+NAME    		ASC	'/GREENSCALE/DATA' 		;followed by the name
+ENDNAME 		EQU	*
+
+
+**************************************************
+*	How many frames have transferred?
+*	up to 32 ($20) based on TRANSFERRED+1
+**************************************************
+HOWMANYFRAMES	LDX #$00					; X=0
+				LDA TRANSFERRED+1			; LDA TRANSFERRED amt hi byte
+HOWMANYLOOP		CMP FRAMESTABLE,X			; compare A to FRAMESTABLE,X
+				BEQ	HOWMANYSET				; if equal, X frames loaded.
+				INX
+				CPX	$20
+				BEQ	HOWMANYSET				; max 32 frames
+				JMP HOWMANYLOOP				; otherwise, INX, Loop
+HOWMANYSET		INX
+				STX FRAMES
+				RTS
+				
 
 **************************************************
 * Data Tables
@@ -167,7 +287,7 @@ LOOPTY			INC FRAMENUM
 *
 **************************************************
 
-COLORTABLEV2	HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res colors from darkest to lightest for Virtual ][
+COLORTABLE		HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res colors from darkest to lightest for Virtual ][
 				HEX 20,22,26,21,24,25,28,23,2C,29,27,2A,2B,2E,2D,2F
 				HEX 60,62,66,61,64,65,68,63,6C,69,67,6A,6B,6E,6D,6F
 				HEX 10,12,16,11,14,15,18,13,1C,19,17,1A,1B,1E,1D,1F
@@ -184,14 +304,26 @@ COLORTABLEV2	HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res colo
 				HEX D0,D2,D6,D1,D4,D5,D8,D3,DC,D9,D7,DA,DB,DE,DD,DF
 				HEX F0,F2,F6,F1,F4,F5,F8,F3,FC,F9,F7,FA,FB,FE,FD,FF
 				
-				
-				
-				
-				
-COLORTABLE		HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; Same, for OpenEmulator, real hardware.
+ALTCOLORTABLE	HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; Same, for OpenEmulator, real hardware.
+				HEX 20,22,21,24,28,23,26,2C,29,25,2A,27,2B,2E,2D,2F
+				HEX 10,12,11,14,18,13,16,1C,19,15,1A,17,1B,1E,1D,1F
+				HEX 40,42,41,44,48,43,46,4C,49,45,4A,47,4B,4E,4D,4F
+				HEX 80,82,81,84,88,83,86,8C,89,85,8A,87,8B,8E,8D,8F
+				HEX 30,32,31,34,38,33,36,3C,39,35,3A,37,3B,3E,3D,3F
+				HEX 60,62,61,64,68,63,66,6C,69,65,6A,67,6B,6E,6D,6F
+				HEX C0,C2,C1,C4,C8,C3,C6,CC,C9,C5,CA,C7,CB,CE,CD,CF
+				HEX 90,92,91,94,98,93,96,9C,99,95,9A,97,9B,9E,9D,9F
+				HEX 50,52,51,54,58,53,56,5C,59,55,5A,57,5B,5E,5D,5F
+				HEX A0,A2,A1,A4,A8,A3,A6,AC,A9,A5,AA,A7,AB,AE,AD,AF
+				HEX 70,72,71,74,78,73,76,7C,79,75,7A,77,7B,7E,7D,7F
+				HEX B0,B2,B1,B4,B8,B3,B6,BC,B9,B5,BA,B7,BB,BE,BD,BF
+				HEX E0,E2,E1,E4,E8,E3,E6,EC,E9,E5,EA,E7,EB,EE,ED,EF
+				HEX D0,D2,D1,D4,D8,D3,D6,DC,D9,D5,DA,D7,DB,DE,DD,DF
+				HEX F0,F2,F1,F4,F8,F3,F6,FC,F9,F5,FA,F7,FB,FE,FD,FF
 
-
-
+FRAMESTABLE		HEX	03,07,0B,0F,12,16,1A,1E,21,25,29,2D,30,34,38,3C		; how many frames transferred? HI byte lookup table
+				HEX	3F,43,47,4B,4E,52,56,5A,5D,61,65,69,6C,70,74,78
+				
 
 **************************************************
 * Lores/Text lines
@@ -223,50 +355,12 @@ Lo22                 equ   $6d0
 Lo23                 equ   $750
 Lo24                 equ   $7d0
 
-; alt text page lines
-Alt01                 equ   $800
-Alt02                 equ   $880
-Alt03                 equ   $900
-Alt04                 equ   $980
-Alt05                 equ   $A00
-Alt06                 equ   $A80
-Alt07                 equ   $B00
-Alt08                 equ   $B80
-Alt09                 equ   $828
-Alt10                 equ   $8a8
-Alt11                 equ   $928
-Alt12                 equ   $9a8
-Alt13                 equ   $A28
-Alt14                 equ   $Aa8
-Alt15                 equ   $B28
-Alt16                 equ   $Ba8
-Alt17                 equ   $850
-Alt18                 equ   $8d0
-Alt19                 equ   $950
-Alt20                 equ   $9d0
-* the "plus four" lines
-Alt21                 equ   $A50
-Alt22                 equ   $Ad0
-Alt23                 equ   $B50
-Alt24                 equ   $Bd0
-
-
-
-
 LoLineTable          da    	Lo01,Lo02,Lo03,Lo04
                      da    	Lo05,Lo06,Lo07,Lo08
                      da		Lo09,Lo10,Lo11,Lo12
                      da    	Lo13,Lo14,Lo15,Lo16
                      da		Lo17,Lo18,Lo19,Lo20
                      da		Lo21,Lo22,Lo23,Lo24
-
-; alt text page
-AltLineTable         da    	Alt01,Alt02,Alt03,Alt04
-                     da    	Alt05,Alt06,Alt07,Alt08
-                     da		Alt09,Alt10,Alt11,Alt12
-                     da    	Alt13,Alt14,Alt15,Alt16
-                     da		Alt17,Alt18,Alt19,Alt20
-                     da		Alt21,Alt22,Alt23,Alt24
 
 
 ** Here we split the table for an optimization
@@ -289,20 +383,7 @@ LoLineTableL         db    <Lo01,<Lo02,<Lo03
                      db    <Lo19,<Lo20,<Lo21
                      db    <Lo22,<Lo23,<Lo24
 
-; alt text page
-AltLineTableH        db    >Alt01,>Alt02,>Alt03
-                     db    >Alt04,>Alt05,>Alt06
-                     db    >Alt07,>Alt08,>Alt09
-                     db    >Alt10,>Alt11,>Alt12
-                     db    >Alt13,>Alt14,>Alt15
-                     db    >Alt16,>Alt17,>Alt18
-                     db    >Alt19,>Alt20,>Alt21
-                     db    >Alt22,>Alt23,>Alt24
-AltLineTableL        db    <Alt01,<Alt02,<Alt03
-                     db    <Alt04,<Alt05,<Alt06
-                     db    <Alt07,<Alt08,<Alt09
-                     db    <Alt10,<Alt11,<Alt12
-                     db    <Alt13,<Alt14,<Alt15
-                     db    <Alt16,<Alt17,<Alt18
-                     db    <Alt19,<Alt20,<Alt21
-                     db    <Alt22,<Alt23,<Alt24
+DATALO				DB	<BEGINDATA
+DATAHI				DB	>BEGINDATA
+
+BEGINDATA			EQU *
