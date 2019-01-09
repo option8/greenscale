@@ -107,7 +107,7 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 				
 				JSR EMULATORCHECK				; check for Virtual II
 				
-				JMP MAIN						; running in VII, go ahead.
+				JMP STARTANIMATION				; running in VII, go ahead.
 												
 				JSR COLORSWAP					; otherwise, swap the color table 
 												*** to do
@@ -117,38 +117,32 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 *	MAIN LOOP
 **************************************************
 
-MAIN		
+STARTANIMATION		
 				LDA DATAHI			; image data starts at end of code.
 				STA IMGHI
 				LDA DATALO
 				STA IMGLO
-				LDA #$0
+				LDA FRAMES
 				STA FRAMENUM		; frame #0
 
-NEXTFRAME		LDA #$00			
-				STA PLOTROW
+EACHFRAME		LDX #$00	
+				STX PLOTROW
 				LDY #$27			; Y IS PLOTCOLUMN
-MAINLOOP
-				LDA (IMGLO),Y		; load byte at IMGLO,IMGHI + COLUMN							
-									; look up color from lookup table
-				TAX				
-				LDA COLORTABLE,X
-				STA CHAR			; put that converted BYTE into CHAR	
-				
-PLOTCHAR
-				LDX PLOTROW
-				LDA LoLineTableL,X
+
+EACHROW			LDA LoLineTableL,X
 				STA $0
 				LDA LoLineTableH,X
 				STA $1       		; now word/pointer at $0+$1 points to screen line 
-LOADQUICK		
-				LDA CHAR
+
+EACHPIXEL		LDA (IMGLO),Y		; load byte at IMGLO,IMGHI + COLUMN							
+				TAX					; look up color from lookup table
+				LDA COLORTABLE,X			
 				STA ($0),Y  		; store byte at LINE + COLUMN
-				
-INCCOLUMN							; next column of 2 pixels
-				DEY					; Y IS PLOTCOLUMN
-				BPL MAINLOOP		
+							
+DECCOLUMN		DEY					; next column of 2 pixels
+				BPL EACHPIXEL		; Y IS PLOTCOLUMN
 				LDY #$27			; reset to col 0
+
 INCROW			INC PLOTROW
 				LDA IMGLO
 				CLC
@@ -156,15 +150,13 @@ INCROW			INC PLOTROW
 				STA IMGLO
 				BCS INCHI
 
-CMPROW			LDA PLOTROW
-				CMP #$18
-				BNE MAINLOOP
+CMPROW			LDX PLOTROW
+				CPX #$18
+				BNE EACHROW
 
-LOOPTY			INC FRAMENUM
-				LDA FRAMENUM
-				CMP FRAMES			; *** how many frames? ***
-				BEQ MAIN			; start over at frame 1
-				JMP NEXTFRAME		; next frame in sequence
+LOOPTY			DEC FRAMENUM
+				BNE EACHFRAME		; next frame in sequence
+				BEQ STARTANIMATION	; start over at frame 1
 
 INCHI 			INC IMGHI
 				BCS CMPROW
