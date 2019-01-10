@@ -4,8 +4,9 @@
 * Low res monochrome image display
 *
 *	to do:
-*		further optimization, to speed up framerate
-*		determine frame length from data length
+*		interframe delay, based on keypress
+*		multiple emulator detection, different color tables
+*		GS/large RAM version to load MOAR data.
 **************************************************
 * Variables
 **************************************************
@@ -25,6 +26,10 @@ IMGLO			EQU		$CD			; image data addres, LO
 
 FRAMENUM		EQU		$1D			; which frame of the anim
 FRAMES			EQU		$1E			; total frames
+
+DELAY			EQU		$1F			; interframe delay amount. 
+									; FF=3FPS $80=10FPS $40=24FPS $20=37FPS $10=43FPS $00=46FPS
+PAUSED			EQU		$20			; paused state - stop animation
 
 **************************************************
 * Apple Standard Memory Locations
@@ -95,17 +100,23 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 				LDA #$00
 				STA BLINK						; blinking text? no thanks.
 				STA LORES						; low res graphics mode
-				STA MIXCLR						; For IIGS
+				STA MIXCLR						; For IIGS - bottom 4 lines to GR
 
-				lda #$01
-				sta $c029
+				STA PAUSED						; start not paused
+
+				
+				lda #$01						; disable SHR for IIgs
+				sta $c029						; re: John Brooks
+
+				STA DELAY						; start with delay = 1 
+
 				lda SETAN3
 				sta CLR80VID 					; turn 80 column off
 
+
 				JSR CLRLORES					; clear screen		
 				
-				
-				JSR EMULATORCHECK				; check for Virtual II
+				JSR EMULATORCHECK				; check for Virtual II, MicroM8?
 				
 				BCS STARTANIMATION				; running in VII, go ahead.
 												
@@ -125,7 +136,8 @@ STARTANIMATION
 				LDA FRAMES
 				STA FRAMENUM		; frame #0
 
-EACHFRAME		LDX #$00	
+EACHFRAME		JSR INTERFRAMEDELAY
+				;LDX #$00	
 				STX PLOTROW
 				LDY #$27			; Y IS PLOTCOLUMN
 
@@ -160,6 +172,64 @@ LOOPTY			DEC FRAMENUM
 
 INCHI 			INC IMGHI
 				BCS CMPROW
+
+;/MAIN LOOP
+
+**************************************************
+*	By popular(?) demand - slows down framerate
+*	based on keyboard input
+**************************************************
+PAUSE			STA PAUSED				; stores #$A0 at PAUSED.
+				STA STROBE
+;				JMP INTERFRAMEDELAY
+
+INTERFRAMEDELAY						
+
+				LDA KEY					; check for keydown
+				CMP PAUSED				; space bar = #$A0
+				BEQ UNPAUSE
+
+				LDA PAUSED				; check for paused state
+				BNE INTERFRAMEDELAY		; loop forever until space bar
+				
+
+CHECKDELAY		LDA KEY					; check for keydown
+
+				CMP #$A0				; space bar, pause
+				BEQ PAUSE
+
+				CMP #$AB				; plus
+				BEQ INCDELAY			; if EQ, slow down (INC DELAY)
+				CMP #$BD				; equals
+				BEQ INCDELAY			; if EQ, slow down (INC DELAY)
+				CMP #$AD				; minus
+				BEQ DECDELAY			; if EQ, speed up (DEC DELAY)
+
+XLOOP			LDX DELAY				; typical delay loop
+
+DELAYLOOP		LDY DELAY
+
+YLOOP			DEY
+				BNE YLOOP
+
+				DEX
+				BNE DELAYLOOP
+
+				RTS
+;/INTERFRAMEDELAY				
+
+UNPAUSE			LDA #$0
+				STA PAUSED
+				STA STROBE
+				JMP CHECKDELAY
+
+INCDELAY		STA STROBE
+				INC DELAY
+				JMP XLOOP
+
+DECDELAY		STA STROBE
+				DEC DELAY
+				JMP XLOOP
 
 	
 **************************************************
@@ -262,7 +332,7 @@ HOWMANYSET		INX
 **************************************************
 
 COLORSWAP	
-				LDA FOURCOLORTABLEHI		; hi byte of ALTCOLORTABLE address
+				LDA THREEGRAYSHI		; hi byte of ALTCOLORTABLE address
 				STA WHICHTABLE+2		; put it in the code
 				RTS
 			   
@@ -294,24 +364,8 @@ COLORTABLE		HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res color
 				HEX D0,D2,D6,D1,D4,D5,D8,D3,DC,D9,D7,DA,DB,DE,DD,DF
 				HEX F0,F2,F6,F1,F4,F5,F8,F3,FC,F9,F7,FA,FB,FE,FD,FF
 				
-;ALTCOLORTABLE	HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; Same, for OpenEmulator, real hardware.
-;				HEX 20,22,21,24,28,23,26,2C,29,25,2A,27,2B,2E,2D,2F
-;				HEX 10,12,11,14,18,13,16,1C,19,15,1A,17,1B,1E,1D,1F
-;				HEX 40,42,41,44,48,43,46,4C,49,45,4A,47,4B,4E,4D,4F
-;				HEX 80,82,81,84,88,83,86,8C,89,85,8A,87,8B,8E,8D,8F
-;				HEX 30,32,31,34,38,33,36,3C,39,35,3A,37,3B,3E,3D,3F
-;				HEX 60,62,61,64,68,63,66,6C,69,65,6A,67,6B,6E,6D,6F
-;				HEX C0,C2,C1,C4,C8,C3,C6,CC,C9,C5,CA,C7,CB,CE,CD,CF
-;				HEX 90,92,91,94,98,93,96,9C,99,95,9A,97,9B,9E,9D,9F
-;				HEX 50,52,51,54,58,53,56,5C,59,55,5A,57,5B,5E,5D,5F
-;				HEX A0,A2,A1,A4,A8,A3,A6,AC,A9,A5,AA,A7,AB,AE,AD,AF
-;				HEX 70,72,71,74,78,73,76,7C,79,75,7A,77,7B,7E,7D,7F
-;				HEX B0,B2,B1,B4,B8,B3,B6,BC,B9,B5,BA,B7,BB,BE,BD,BF
-;				HEX E0,E2,E1,E4,E8,E3,E6,EC,E9,E5,EA,E7,EB,EE,ED,EF
-;				HEX D0,D2,D1,D4,D8,D3,D6,DC,D9,D5,DA,D7,DB,DE,DD,DF
-;				HEX F0,F2,F1,F4,F8,F3,F6,FC,F9,F5,FA,F7,FB,FE,FD,FF
 
-FOURCOLORTABLE	HEX 00,02,02,02,02,06,06,06,06,06,06,07,07,07,07,0F		; just 4 colors
+THREEGRAYSTABLE	HEX 00,02,02,02,02,06,06,06,06,06,06,07,07,07,07,0F		; W/B and 3 grays/shades of blue
 				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
 				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
 				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
@@ -328,7 +382,14 @@ FOURCOLORTABLE	HEX 00,02,02,02,02,06,06,06,06,06,06,07,07,07,07,0F		; just 4 col
 				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
 				HEX F0,F2,F2,F2,F2,F6,F6,F6,F6,F6,F6,F7,F7,F7,F7,FF
 
-FOURCOLORTABLEHI db >FOURCOLORTABLE
+;ALTCOLORTABLE	HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; for OpenEmulator, real hardware.
+
+;MICROM8		HEX 00,02,04,08,0C,01,09,05,06,0E,0D,03,0A,07,0B,0F
+
+;VIDHD			HEX 00,02,01,04,08,03,09,05,0A,06,0C,07,0B,0E,0D,0F
+
+
+THREEGRAYSHI db >THREEGRAYSTABLE
 
 FRAMESTABLE		HEX	03,07,0B,0F,12,16,1A,1E,21,25,29,2D,30,34,38,3C		; how many frames transferred? HI byte lookup table
 				HEX	3F,43,47,4B,4E,52,56,5A,5D,61,65,69,6C,70,74,78
