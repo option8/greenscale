@@ -107,7 +107,7 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 				
 				JSR EMULATORCHECK				; check for Virtual II
 				
-				JMP STARTANIMATION				; running in VII, go ahead.
+				BCS STARTANIMATION				; running in VII, go ahead.
 												
 				JSR COLORSWAP					; otherwise, swap the color table 
 												*** to do
@@ -136,7 +136,7 @@ EACHROW			LDA LoLineTableL,X
 
 EACHPIXEL		LDA (IMGLO),Y		; load byte at IMGLO,IMGHI + COLUMN							
 				TAX					; look up color from lookup table
-				LDA COLORTABLE,X			
+WHICHTABLE		LDA COLORTABLE,X			
 				STA ($0),Y  		; store byte at LINE + COLUMN
 							
 DECCOLUMN		DEY					; next column of 2 pixels
@@ -183,19 +183,6 @@ FOUNDVII
     			RTS	
 	
 	
-**************************************************
-*	Swap the color table with one for real
-*	hardware/OpenEmulator
-**************************************************
-
-COLORSWAP	
-				LDX #$00
-SWAPLOOP		LDA ALTCOLORTABLE,X
-				STA COLORTABLE,X
-				INX
-				BNE SWAPLOOP
-				RTS
-			   
 **************************************************
 *	Load "banana" into memory
 *	
@@ -261,13 +248,24 @@ HOWMANYFRAMES	LDX #$00					; X=0
 HOWMANYLOOP		CMP FRAMESTABLE,X			; compare A to FRAMESTABLE,X
 				BEQ	HOWMANYSET				; if equal, X frames loaded.
 				INX
-				CPX	$20
+				CPX	$30						; out of memory around 41 frames.
 				BEQ	HOWMANYSET				; max 32 frames
 				JMP HOWMANYLOOP				; otherwise, INX, Loop
 HOWMANYSET		INX
 				STX FRAMES
 				RTS
 				
+**************************************************
+*	Swap the color table with one for real
+*	hardware/OpenEmulator
+*	This works because the color tables are $FF bytes long.
+**************************************************
+
+COLORSWAP	
+				LDA FOURCOLORTABLEHI		; hi byte of ALTCOLORTABLE address
+				STA WHICHTABLE+2		; put it in the code
+				RTS
+			   
 
 **************************************************
 * Data Tables
@@ -296,25 +294,45 @@ COLORTABLE		HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res color
 				HEX D0,D2,D6,D1,D4,D5,D8,D3,DC,D9,D7,DA,DB,DE,DD,DF
 				HEX F0,F2,F6,F1,F4,F5,F8,F3,FC,F9,F7,FA,FB,FE,FD,FF
 				
-ALTCOLORTABLE	HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; Same, for OpenEmulator, real hardware.
-				HEX 20,22,21,24,28,23,26,2C,29,25,2A,27,2B,2E,2D,2F
-				HEX 10,12,11,14,18,13,16,1C,19,15,1A,17,1B,1E,1D,1F
-				HEX 40,42,41,44,48,43,46,4C,49,45,4A,47,4B,4E,4D,4F
-				HEX 80,82,81,84,88,83,86,8C,89,85,8A,87,8B,8E,8D,8F
-				HEX 30,32,31,34,38,33,36,3C,39,35,3A,37,3B,3E,3D,3F
-				HEX 60,62,61,64,68,63,66,6C,69,65,6A,67,6B,6E,6D,6F
-				HEX C0,C2,C1,C4,C8,C3,C6,CC,C9,C5,CA,C7,CB,CE,CD,CF
-				HEX 90,92,91,94,98,93,96,9C,99,95,9A,97,9B,9E,9D,9F
-				HEX 50,52,51,54,58,53,56,5C,59,55,5A,57,5B,5E,5D,5F
-				HEX A0,A2,A1,A4,A8,A3,A6,AC,A9,A5,AA,A7,AB,AE,AD,AF
-				HEX 70,72,71,74,78,73,76,7C,79,75,7A,77,7B,7E,7D,7F
-				HEX B0,B2,B1,B4,B8,B3,B6,BC,B9,B5,BA,B7,BB,BE,BD,BF
-				HEX E0,E2,E1,E4,E8,E3,E6,EC,E9,E5,EA,E7,EB,EE,ED,EF
-				HEX D0,D2,D1,D4,D8,D3,D6,DC,D9,D5,DA,D7,DB,DE,DD,DF
-				HEX F0,F2,F1,F4,F8,F3,F6,FC,F9,F5,FA,F7,FB,FE,FD,FF
+;ALTCOLORTABLE	HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; Same, for OpenEmulator, real hardware.
+;				HEX 20,22,21,24,28,23,26,2C,29,25,2A,27,2B,2E,2D,2F
+;				HEX 10,12,11,14,18,13,16,1C,19,15,1A,17,1B,1E,1D,1F
+;				HEX 40,42,41,44,48,43,46,4C,49,45,4A,47,4B,4E,4D,4F
+;				HEX 80,82,81,84,88,83,86,8C,89,85,8A,87,8B,8E,8D,8F
+;				HEX 30,32,31,34,38,33,36,3C,39,35,3A,37,3B,3E,3D,3F
+;				HEX 60,62,61,64,68,63,66,6C,69,65,6A,67,6B,6E,6D,6F
+;				HEX C0,C2,C1,C4,C8,C3,C6,CC,C9,C5,CA,C7,CB,CE,CD,CF
+;				HEX 90,92,91,94,98,93,96,9C,99,95,9A,97,9B,9E,9D,9F
+;				HEX 50,52,51,54,58,53,56,5C,59,55,5A,57,5B,5E,5D,5F
+;				HEX A0,A2,A1,A4,A8,A3,A6,AC,A9,A5,AA,A7,AB,AE,AD,AF
+;				HEX 70,72,71,74,78,73,76,7C,79,75,7A,77,7B,7E,7D,7F
+;				HEX B0,B2,B1,B4,B8,B3,B6,BC,B9,B5,BA,B7,BB,BE,BD,BF
+;				HEX E0,E2,E1,E4,E8,E3,E6,EC,E9,E5,EA,E7,EB,EE,ED,EF
+;				HEX D0,D2,D1,D4,D8,D3,D6,DC,D9,D5,DA,D7,DB,DE,DD,DF
+;				HEX F0,F2,F1,F4,F8,F3,F6,FC,F9,F5,FA,F7,FB,FE,FD,FF
+
+FOURCOLORTABLE	HEX 00,02,02,02,02,06,06,06,06,06,06,07,07,07,07,0F		; just 4 colors
+				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
+				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
+				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
+				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
+				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
+				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
+				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
+				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
+				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
+				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
+				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
+				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
+				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
+				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
+				HEX F0,F2,F2,F2,F2,F6,F6,F6,F6,F6,F6,F7,F7,F7,F7,FF
+
+FOURCOLORTABLEHI db >FOURCOLORTABLE
 
 FRAMESTABLE		HEX	03,07,0B,0F,12,16,1A,1E,21,25,29,2D,30,34,38,3C		; how many frames transferred? HI byte lookup table
 				HEX	3F,43,47,4B,4E,52,56,5A,5D,61,65,69,6C,70,74,78
+				HEX	7B,7F,83,87,8A,8E,92,96,99,9D,A1,A5,A8,AC,B0,B4
 				
 
 **************************************************
