@@ -4,9 +4,8 @@
 * Low res monochrome image display
 *
 *	to do:
-*		multiple emulator detection, different color tables
 *		GS/large RAM version to load MOAR data.
-*		large volume version, load several animations, loop between them on keypress
+*		generate single color table on the fly
 **************************************************
 * Variables
 **************************************************
@@ -21,8 +20,11 @@ CHAR			EQU		$FD			; byte at PLOTROW,PLOTCOLUMN
 PLOTROW			EQU		$FE			; row in text page = ROW/2, remainder = nibble
 PLOTCOLUMN		EQU		$FF			; col in text page == COLUMN
 
-IMGHI			EQU		$CE			; image data addres, HI
 IMGLO			EQU		$CD			; image data addres, LO
+IMGHI			EQU		$CE			; image data addres, HI
+
+SEEDADDRLO		EQU		$CB			;	db <TABLESEED
+SEEDADDRHI		EQU		$CC			;	db >TABLESEED
 
 FRAMENUM		EQU		$1D			; which frame of the anim
 FRAMES			EQU		$1E			; total frames
@@ -32,6 +34,7 @@ DELAY			EQU		$1F			; interframe delay amount.
 PAUSED			EQU		$20			; paused state - stop animation
 
 COLORMODE		EQU		$22			; which color mode are we in? which table to draw from
+TABLEOFFSET		EQU		$23	
 
 **************************************************
 * Apple Standard Memory Locations
@@ -116,14 +119,18 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 				lda SETAN3
 				sta CLR80VID 					; turn 80 column off
 
-
 				JSR CLRLORES					; clear screen		
 				
-				JSR EMULATORCHECK				; check for Virtual II, MicroM8?
+				JSR EMULATORCHECK				; check for Virtual II, MicroM8?						
+
+				LDY COLORMODE
+				LDA SEEDSTABLELO,Y
+				STA SEEDADDRLO
+
+				LDA SEEDSTABLEHI,Y
+				STA SEEDADDRHI
 				
-				BCC STARTANIMATION				; not running in VII, go ahead.
-					
-				JSR COLORSWAP					; otherwise, swap the color table (#1 is VII)			
+				JSR GENERATETABLE				; create a 256byte table from 16bytes. Magic!
 
 **************************************************
 *	MAIN LOOP
@@ -182,7 +189,6 @@ INCHI 			INC IMGHI
 **************************************************
 PAUSE			STA PAUSED				; stores #$A0 at PAUSED.
 				STA STROBE
-;				JMP INTERFRAMEDELAY
 
 INTERFRAMEDELAY						
 
@@ -259,18 +265,34 @@ SWITCHDATA		STA STROBE
 **************************************************
 	
 EMULATORCHECK	
-				LDX #$00
-				CLC
-CHKVII
-				INX
+				LDX #$00			; reset X and Y
+				LDY #$00			
+				CLC					; CARRY=VII
+				CLV					; OVerflow = M8
+
+CHKVII								; if C04F is and stays zero, INC X
+				INX					; if X rolls over to zero, it's VII
 				BEQ FOUNDVII
 				LDA $C04F
-				BEQ CHKVII
-				CLC 				;set return value: no Virtual II
+				BEQ CHKVII			; 0, then may be VII
+				
+CHKM8			INY					; now to check for MICROM8	
+				CPY #$FF
+				BEQ FOUNDM8			
+				CMP #$2E						
+				BEQ CHKM8			; it's #$2E. Does it stay that way?
+				
+				CLC 				;set return value: no Virtual II or M8
 				RTS
 FOUNDVII
     			SEC 				;set return value: found Virtual II
+				JSR COLORSWAP		; otherwise, swap the color table (#1 is VII)	
     			RTS	
+
+FOUNDM8			ADC #$80			; add over 128 = set OVerflow
+				INC COLORMODE		; next color mode
+				JSR COLORSWAP		; otherwise, swap the color table (#2 is M8)	
+				RTS
 	
 	
 **************************************************
@@ -364,18 +386,28 @@ COLORSWAP		INC COLORMODE			; next mode to cycle through
 										; otherwise, be sure to be back in GR
 				STX LORES				; low res graphics mode
 				STX MIXCLR				; For IIGS - bottom 4 lines to GR
+
+NEWTABLE		
+				LDA SEEDSTABLELO,X
+				STA SEEDADDRLO
+
+				LDA SEEDSTABLEHI,X
+				STA SEEDADDRHI
 				
-				CPX #$06				; overrun, back to zero
-				BNE SWAPTABLE
-				LDX #$0
-				STX COLORMODE
-				
-SWAPTABLE		LDA COLORMODESTABLE,X	; grab table address from LUT
+				JSR GENERATETABLE		; create a 256byte table from 16bytes. Magic!
+
+				LDA COLORTABLEHI		; grab table address for LUT
 				STA WHICHTABLE+2		; put it in the code
 				RTS
 
 TEXTSWAP		STA TXTSET				; set text mode
-				JMP SWAPTABLE		   
+SWAPTABLE		LDA TEXTTABLEHI			; grab table address for LUT
+				STA WHICHTABLE+2		; put it in the code
+				LDX #$FF
+				STX COLORMODE
+				RTS
+
+
 
 **************************************************
 *	Increment the name of the file to be loaded
@@ -403,93 +435,60 @@ SETFILE			STY ENDNAME-1
 *
 **************************************************
 
+**************************************************
+*	Generates a 256 byte table, given a pattern of
+*	16 bytes. With more color tables in the program,
+*	this saves me more than 1K of memory
+**************************************************
 
-COLORTABLE		HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F		; for OpenEmulator, real hardware.
-				HEX 20,22,21,24,28,23,26,2C,29,25,2A,27,2B,2E,2D,2F
-				HEX 10,12,11,14,18,13,16,1C,19,15,1A,17,1B,1E,1D,1F
-				HEX 40,42,41,44,48,43,46,4C,49,45,4A,47,4B,4E,4D,4F
-				HEX 80,82,81,84,88,83,86,8C,89,85,8A,87,8B,8E,8D,8F
-				HEX 30,32,31,34,38,33,36,3C,39,35,3A,37,3B,3E,3D,3F
-				HEX 60,62,61,64,68,63,66,6C,69,65,6A,67,6B,6E,6D,6F
-				HEX c0,c2,c1,c4,c8,c3,c6,cC,c9,c5,cA,c7,cB,cE,cD,cF
-				HEX 90,92,91,94,98,93,96,9C,99,95,9A,97,9B,9E,9D,9F
-				HEX 50,52,51,54,58,53,56,5C,59,55,5A,57,5B,5E,5D,5F
-				HEX A0,A2,A1,A4,A8,A3,A6,AC,A9,A5,AA,A7,AB,AE,AD,AF
-				HEX 70,72,71,74,78,73,76,7C,79,75,7A,77,7B,7E,7D,7F
-				HEX B0,B2,B1,B4,B8,B3,B6,BC,B9,B5,BA,B7,BB,BE,BD,BF
-				HEX E0,E2,E1,E4,E8,E3,E6,EC,E9,E5,EA,E7,EB,EE,ED,EF
-				HEX D0,D2,D1,D4,D8,D3,D6,DC,D9,D5,DA,D7,DB,DE,DD,DF
-				HEX F0,F2,F1,F4,F8,F3,F6,FC,F9,F5,FA,F7,FB,FE,FD,FF
-
-V2COLORTABLE	HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res colors from darkest to lightest for Virtual ][
-				HEX 20,22,26,21,24,25,28,23,2C,29,27,2A,2B,2E,2D,2F
-				HEX 60,62,66,61,64,65,68,63,6C,69,67,6A,6B,6E,6D,6F
-				HEX 10,12,16,11,14,15,18,13,1C,19,17,1A,1B,1E,1D,1F
-				HEX 40,42,46,41,44,45,48,43,4C,49,47,4A,4B,4E,4D,4F
-				HEX 50,52,56,51,54,55,58,53,5C,59,57,5A,5B,5E,5D,5F
-				HEX 80,82,86,81,84,85,88,83,8C,89,87,8A,8B,8E,8D,8F
-				HEX 30,32,36,31,34,35,38,33,3C,39,37,3A,3B,3E,3D,3F
-				HEX C0,C2,C6,C1,C4,C5,C8,C3,CC,C9,C7,CA,CB,CE,CD,CF
-				HEX 90,92,96,91,94,95,98,93,9C,99,97,9A,9B,9E,9D,9F
-				HEX 70,72,76,71,74,75,78,73,7C,79,77,7A,7B,7E,7D,7F
-				HEX A0,A2,A6,A1,A4,A5,A8,A3,AC,A9,A7,AA,AB,AE,AD,AF
-				HEX B0,B2,B6,B1,B4,B5,B8,B3,BC,B9,B7,BA,BB,BE,BD,BF
-				HEX E0,E2,E6,E1,E4,E5,E8,E3,EC,E9,E7,EA,EB,EE,ED,EF
-				HEX D0,D2,D6,D1,D4,D5,D8,D3,DC,D9,D7,DA,DB,DE,DD,DF
-				HEX F0,F2,F6,F1,F4,F5,F8,F3,FC,F9,F7,FA,FB,FE,FD,FF
+GENERATETABLE					
+				; start with address of "seed"
+				LDA #$FF				; TABLEOFFSET = FF
+				STA TABLEOFFSET			; where in the COLORTABLE I'm writing
 				
+				LDA #$0F				; for X F to 0
+				STA $07
 
-THREEGRAYSTABLE	HEX 00,02,02,02,02,06,06,06,06,06,06,07,07,07,07,0F		; W/B and 3 grays/shades of blue
-				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
-				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
-				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
-				HEX 20,22,22,22,22,26,26,26,26,26,26,27,27,27,27,2F
-				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
-				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
-				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
-				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
-				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
-				HEX 60,62,62,62,62,66,66,66,66,66,66,67,67,67,67,6F
-				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
-				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
-				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
-				HEX 70,72,72,72,72,76,76,76,76,76,76,77,77,77,77,7F
-				HEX F0,F2,F2,F2,F2,F6,F6,F6,F6,F6,F6,F7,F7,F7,F7,FF
+GENXLOOP		LDA #$0F				; for Y F to 0
+				STA $06
+
+GENYLOOP		
+;				STY	$06					; hang onto Y
+				LDY $07
+				LDA (SEEDADDRLO),Y			; (A=0F)
+				ROL						; ROLx4 (A=20)
+				ROL
+				ROL
+				ROL						
+				LDY $06					; get Y back
+				ADC (SEEDADDRLO),Y 		; (A=FF)
+;				STY $06					; store Y at $06 for safekeeping
+				LDY TABLEOFFSET			
+				STA COLORTABLE,Y
+				DEC TABLEOFFSET
+;				LDY $06
+;				DEY
+				DEC $06
+				BPL	GENYLOOP			; if Y = FF, next X
+GENDECX			DEC $07
+				BPL	GENXLOOP			; if X=FF, done
+GENRTS			RTS
+;/GENERATETABLE				
 
 
+
+TABLESEED		HEX 00,02,01,04,08,03,06,0C,09,05,0A,07,0B,0E,0D,0F
+V2COLORTABLE	HEX 00,02,06,01,04,05,08,03,0C,09,07,0A,0B,0E,0D,0F		; Low res colors from darkest to lightest for Virtual ][
 MICROM8			HEX 00,02,04,08,0C,01,09,05,06,0E,0D,03,0A,07,0B,0F
-				HEX 20,22,24,28,2C,21,29,25,26,2E,2D,23,2A,27,2B,2F
-				HEX 40,42,44,48,4C,41,49,45,46,4E,4D,43,4A,47,4B,4F
-				HEX 80,82,84,88,8C,81,89,85,86,8E,8D,83,8A,87,8B,8F
-				HEX C0,C2,C4,C8,CC,C1,C9,C5,C6,CE,CD,C3,CA,C7,CB,CF
-				HEX 10,12,14,18,1C,11,19,15,16,1E,1D,13,1A,17,1B,1F
-				HEX 90,92,94,98,9C,91,99,95,96,9E,9D,93,9A,97,9B,9F
-				HEX 50,52,54,58,5C,51,59,55,56,5E,5D,53,5A,57,5B,5F
-				HEX 60,62,64,68,6C,61,69,65,66,6E,6D,63,6A,67,6B,6F
-				HEX E0,E2,E4,E8,EC,E1,E9,E5,E6,EE,ED,E3,EA,E7,EB,EF
-				HEX D0,D2,D4,D8,DC,D1,D9,D5,D6,DE,DD,D3,DA,D7,DB,DF
-				HEX 30,32,34,38,3C,31,39,35,36,3E,3D,33,3A,37,3B,3F
-				HEX A0,A2,A4,A8,AC,A1,A9,A5,A6,AE,AD,A3,AA,A7,AB,AF
-				HEX 70,72,74,78,7C,71,79,75,76,7E,7D,73,7A,77,7B,7F
-				HEX B0,B2,B4,B8,BC,B1,B9,B5,B6,BE,BD,B3,BA,B7,BB,BF
-				HEX F0,F2,F4,F8,FC,F1,F9,F5,F6,FE,FD,F3,FA,F7,FB,FF
-
+THREEGRAYSTABLE	HEX 00,02,02,02,02,06,06,06,06,06,06,07,07,07,07,0F		; W/B and 3 grays/shades of blue
 VIDHD			HEX 00,02,01,04,08,03,09,05,0A,06,0C,07,0B,0E,0D,0F
-				HEX 20,22,21,24,28,23,29,25,2A,26,2C,27,2B,2E,2D,2F
-				HEX 10,12,11,14,18,13,19,15,1A,16,1C,17,1B,1E,1D,1F
-				HEX 40,42,41,44,48,43,49,45,4A,46,4C,47,4B,4E,4D,4F
-				HEX 80,82,81,84,88,83,89,85,8A,86,8C,87,8B,8E,8D,8F
-				HEX 30,32,31,34,38,33,39,35,3A,36,3C,37,3B,3E,3D,3F
-				HEX 90,92,91,94,98,93,99,95,9A,96,9C,97,9B,9E,9D,9F
-				HEX 50,52,51,54,58,53,59,55,5A,56,5C,57,5B,5E,5D,5F
-				HEX A0,A2,A1,A4,A8,A3,A9,A5,AA,A6,AC,A7,AB,AE,AD,AF
-				HEX 60,62,61,64,68,63,69,65,6A,66,6C,67,6B,6E,6D,6F
-				HEX C0,C2,C1,C4,C8,C3,C9,C5,CA,C6,CC,C7,CB,CE,CD,CF
-				HEX 70,72,71,74,78,73,79,75,7A,76,7C,77,7B,7E,7D,7F
-				HEX B0,B2,B1,B4,B8,B3,B9,B5,BA,B6,BC,B7,BB,BE,BD,BF
-				HEX E0,E2,E1,E4,E8,E3,E9,E5,EA,E6,EC,E7,EB,EE,ED,EF
-				HEX D0,D2,D1,D4,D8,D3,D9,D5,DA,D6,DC,D7,DB,DE,DD,DF
-				HEX F0,F2,F1,F4,F8,F3,F9,F5,FA,F6,FC,F7,FB,FE,FD,FF
+
+SEEDSTABLEHI 	db >TABLESEED,>V2COLORTABLE,>MICROM8,>THREEGRAYSTABLE,>VIDHD
+SEEDSTABLELO 	db <TABLESEED,<V2COLORTABLE,<MICROM8,<THREEGRAYSTABLE,<VIDHD
+
+
+
+COLORTABLE		DS 256,$FF
 
 TEXTTABLE		ASC	"  '''````~~~^^",A2,A2		; Low res colors from darkest to lightest for Virtual ][
 				ASC	"..'''````~~~^^",A2,A2		; A2 = ""
@@ -508,15 +507,14 @@ TEXTTABLE		ASC	"  '''````~~~^^",A2,A2		; Low res colors from darkest to lightest
 				ASC	"wwhhddbbkkKK##**"
 				ASC	"mmhhddbbkkKK##&*"
 
+TEXTTABLEHI		db >TEXTTABLE
+COLORTABLEHI	db >COLORTABLE
 
-
-COLORMODESTABLE db >COLORTABLE,>V2COLORTABLE,>THREEGRAYSTABLE,>MICROM8,>VIDHD,>TEXTTABLE
 
 FRAMESTABLE		HEX	03,07,0B,0F,12,16,1A,1E,21,25,29,2D,30,34,38,3C		; how many frames transferred? HI byte lookup table
 				HEX	3F,43,47,4B,4E,52,56,5A,5D,61,65,69,6C,70,74,78
 				HEX	7B,7F,83,87,8A,8E,92,96,99,9D,A1,A5,A8,AC,B0,B4
 				
-
 **************************************************
 * Lores/Text lines
 * Thanks to Dagen Brock for this.
