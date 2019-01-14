@@ -110,10 +110,17 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 				STA PAUSED						; start not paused
 				STA COLORMODE					; start in default, real hardware mode
 				
-				lda #$01						; disable SHR for IIgs
+DETECTGS		
+				SEC               				;Set carry bit (flag)
+				JSR $FE1F         				;Call to the monitor
+				BCS NOTGS    					;If carry is still set, then old machine
+				;BCC ISGS    					;If carry is clear, then new machine
+				
+ISGS			lda #$01						; disable SHR for IIgs
 				sta $c029						; re: John Brooks
+												; need to skip this if on IIe card, otherwise goes to alt ROM
 
-				LDA #$30
+NOTGS			LDA #$30
 				STA DELAY						; start with a modest 30FPS 
 
 				lda SETAN3
@@ -121,14 +128,14 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 
 				JSR CLRLORES					; clear screen		
 				
-				JSR EMULATORCHECK				; check for Virtual II, MicroM8?						
+				JSR EMULATORCHECK				; check for Virtual II, MicroM8					
 
-				LDY COLORMODE
-				LDA SEEDSTABLELO,Y
-				STA SEEDADDRLO
+				LDY COLORMODE					; colormode set by EMULATORCHECK, or 00
+				LDA SEEDSTABLELO,Y				; which "Seed" table to generate from
+				STA SEEDADDRLO					
 
-				LDA SEEDSTABLEHI,Y
-				STA SEEDADDRHI
+				LDA SEEDSTABLEHI,Y					
+				STA SEEDADDRHI					
 				
 				JSR GENERATETABLE				; create a 256byte table from 16bytes. Magic!
 
@@ -267,8 +274,7 @@ SWITCHDATA		STA STROBE
 EMULATORCHECK	
 				LDX #$00			; reset X and Y
 				LDY #$00			
-				CLC					; CARRY=VII
-				CLV					; OVerflow = M8
+				CLC					; CARRY=VII found
 
 CHKVII								; if C04F is and stays zero, INC X
 				INX					; if X rolls over to zero, it's VII
@@ -331,6 +337,7 @@ ERROR  			CMP #$46					; file not found during OPEN? reset to "DATA00"
 				BNE PRINTERROR
 				LDA #$30
 				STA ENDNAME-1
+				STA ENDNAME-2
 				JMP OPEN
 PRINTERROR		JSR	PRBYTE    				;Print error code
        			JSR	BELL      				;Ring the bell
@@ -418,6 +425,12 @@ NEXTFILE		LDY ENDNAME-1			; last char in ascii filename "DATA00" = #$30
 				CPY #$3A				; roll over past "9"?
 				BNE SETFILE
 				LDY #$30				; reset to "0"
+				LDX ENDNAME-2
+				INX
+				CPX #$3A				; roll over past "9"?
+				BNE SETFILE10
+				LDX #$30				; reset to "0"
+SETFILE10		STX ENDNAME-2
 SETFILE			STY ENDNAME-1
 				JSR BLOAD
 				JSR HOWMANYFRAMES		; how big is the new animation data?
