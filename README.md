@@ -16,7 +16,7 @@ https://youtu.be/uejBb3Na7lc
 
 To convert a GIF (named animation.gif) with the included greenscale.sh script requires ImageMagick and Python. 
 
-Put resulting DATA file on disk as DATA00, optionally with other DATA files named DATA01 through DATA09. 
+Put resulting DATA file on disk as DATA00, optionally with other DATA files named DATA01 through DATA99. 
 
 Replace BASIC.SYSTEM with LOADER.SYSTEM and put GREENSCALE binary on the disk. LOADER will load GREENSCALE, which loads the DATA files to display.
 
