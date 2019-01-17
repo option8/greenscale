@@ -74,7 +74,17 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 **************************************************
 
 
-BLOAD   		JSR	OPEN    				;open "DATA"
+BLOAD   		JSR	OPEN    				;open "PRORWTS2"
+       			JSR READ
+       			JSR ERROR					
+				JSR CLOSE
+       			JSR ERROR					
+			JSR $800					;init ProRWTS2
+			LDA #>FILENAME2
+			STA OPENLIST+2
+			LDA #<FILENAME2
+			STA OPENLIST+1
+	   		JSR	OPEN    				;open "DATA"
        			JSR READ
        			JSR ERROR					
 				JSR CLOSE
@@ -106,21 +116,26 @@ ERROR  			JSR	PRBYTE    				;Print error code
        			RTS				
 
 OPENLIST		DB	$03						; parameter list for OPEN command
-				DW	FILENAME
-				DA	MLI-$400				; buffer snuggled up tight with PRODOS
+				DW	FILENAME1
+				DA	$6000					; not near me
 REFERENCE		DB	$00						; reference to opened file
 			
 READLIST		DB	$04
 				DB	$00						; REFERENCE written here after OPEN
-				DB	$00,$08					; write to $0C00
+				DB	$00,$08					; write to $0800
 				DB	$FF,$FF					; read as much as $FFFF - should error out with EOF before that.
 TRANSFERRED		DB	$00,$00				
 
 CLOSELIST		DB	$01
 				DB	$00
 				
-FILENAME		DB	ENDNAME-NAME 			;Length of name
-NAME    		ASC	'/GREENSCALE/GREENSCALE' ;followed by the name
-ENDNAME 		EQU	*
+FILENAME1		DB	ENDNAME1-NAME1 			;Length of name
+NAME1    		ASC	'PRORWTS2'			;followed by the name
+ENDNAME1 		EQU	*
+
+FILENAME2		DB	ENDNAME2-NAME2 			;Length of name
+NAME2    		ASC	'/GREENSCALE/GREENSCALE' ;followed by the name
+ENDNAME2 		EQU	*
+
 
 
