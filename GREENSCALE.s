@@ -36,6 +36,36 @@ PAUSED			EQU		$20			; paused state - stop animation
 COLORMODE		EQU		$22			; which color mode are we in? which table to draw from
 TABLEOFFSET		EQU		$23	
 
+;from ProRWTS2
+;subdirectory support
+bloklo			EQU		$46
+blokhi			EQU		$47
+
+;to detect file not found
+status			EQU		$50
+
+;file read support
+sizelo			EQU		$52
+sizehi			EQU		$53
+ldrlo			EQU		$55
+ldrhi			EQU		$56
+
+;file open support
+namlo			EQU		$57
+namhi			EQU		$58
+
+;rewind support
+blkidx			EQU		$5e
+bleftlo			EQU		$60
+blefthi			EQU		$61
+
+;API
+hddopendir		EQU		$BD03
+hddrdwrpart		EQU		$BD00
+hddblockhi		EQU		$BD06
+hddblocklo		EQU		$BD04
+
+
 **************************************************
 * Apple Standard Memory Locations
 **************************************************
@@ -94,6 +124,16 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 
 				ORG $0800						; PROGRAM DATA STARTS AT $0C00 NOW
 
+				LDA #>SUBDIRNAME
+				STA namhi
+				LDA #<SUBDIRNAME
+				STA namlo
+				JSR hddopendir					;open subdirectory
+				LDA blokhi
+				STA hddblockhi
+				LDA bloklo
+				STA hddblocklo					;make it permanent
+
 				JSR BLOAD						; BLOAD DATA
 					
 				JSR HOWMANYFRAMES				; how big is the animation data?
@@ -144,14 +184,26 @@ NOTGS			LDA #$30
 **************************************************
 
 STARTANIMATION	
+				LDA FRAMES
+				STA FRAMENUM		; frame #0
+
+EACHFRAME
 				LDA DATAHI			; image data starts at end of code.
 				STA IMGHI
 				LDA DATALO
 				STA IMGLO
-				LDA FRAMES
-				STA FRAMENUM		; frame #0
 
-EACHFRAME		JSR INTERFRAMEDELAY
+				LDA #3
+				STA sizehi
+				LDA #$C0
+				STA sizelo
+				LDA #>BEGINDATA
+				STA ldrhi
+				LDA #<BEGINDATA
+				STA ldrlo
+				JSR hddrdwrpart		;read a frame of data
+
+				JSR INTERFRAMEDELAY
 				LDX #$00	
 				STX PLOTROW
 				LDY #$27			; Y IS PLOTCOLUMN
@@ -307,75 +359,47 @@ FOUNDM8			ADC #$80			; add over 128 = set OVerflow
 **************************************************
 
 
-BLOAD   		JSR	OPEN    				;open "DATA"
-       			JSR READ
-				JSR CLOSE
-       			RTS            				;Otherwise done
-				
-OPEN 			JSR	MLI       				;Perform call
-       			DB	OPENCMD    				;CREATE command number
-       			DW	OPENLIST   				;Pointer to parameter list
-       			BNE	ERROR     				;If error, display it
-       			LDA REFERENCE
-       			STA READLIST+1
-       			STA CLOSELIST+1
-       			RTS				
-
-READ			JSR MLI
-				DB	READCMD
-				DW	READLIST
-       			BNE ERROR					
-				RTS
-
-CLOSE			JSR MLI
-				DB	CLOSECMD
-				DW	CLOSELIST
-       			BNE ERROR					
-				RTS
-				
-ERROR  			CMP #$46					; file not found during OPEN? reset to "DATA00"
-				BNE PRINTERROR
+BLOAD
+				LDA #>FILENAME
+				STA namhi
+				LDA #<FILENAME
+				STA namlo
+				LDA #0
+				STA sizehi
+				STA sizelo			;no pre-read needed
+				JSR hddopendir			;open "data"
+				LDA status
+				BEQ GOODOPEN
 				LDA #$30
 				STA ENDNAME-1
 				STA ENDNAME-2
-				JMP OPEN
-PRINTERROR		JSR	PRBYTE    				;Print error code
-       			JSR	BELL      				;Ring the bell
-       			JSR	CROUT     				;Print a carriage return
-       			RTS				
+				STA ENDNAME-3
+				BNE BLOAD
+GOODOPEN			RTS
 
-OPENLIST		DB	$03						; parameter list for OPEN command
-				DW	FILENAME
-				DA	MLI-$400				; buffer snuggled up tight with PRODOS
-REFERENCE		DB	$00						; reference to opened file
-			
-READLIST		DB	$04
-				DB	$00						; REFERENCE written here after OPEN
-				DB	<BEGINDATA,>BEGINDATA	; write to end of code
-				DB	$FF,$FF					; read as much as $FFFF - should error out with EOF before that.
-TRANSFERRED		DB	$00,$00				
+SUBDIRNAME		DB	ENDSUB-SUBNAME 			;Length of name
+SUBNAME			ASC	'DATA'			;followed by the name
+ENDSUB			EQU	*
 
-CLOSELIST		DB	$01
-				DB	$00
-				
 FILENAME		DB	ENDNAME-NAME 			;Length of name
-NAME    		ASC	'/GREENSCALE/DATA00' 		;followed by the name
+NAME    		ASC	'DATA000' 			;followed by the name
 ENDNAME 		EQU	*
 
 
 **************************************************
 *	How many frames have transferred?
-*	up to 32 ($20) based on TRANSFERRED+1
 **************************************************
-HOWMANYFRAMES	LDX #$00					; X=0
-				LDA TRANSFERRED+1			; LDA TRANSFERRED amt hi byte
-HOWMANYLOOP		CMP FRAMESTABLE,X			; compare A to FRAMESTABLE,X
-				BEQ	HOWMANYSET				; if equal, X frames loaded.
-				INX
-				CPX	$30						; out of memory around 41 frames.
-				BEQ	HOWMANYSET				; max 32 frames
-				JMP HOWMANYLOOP				; otherwise, INX, Loop
-HOWMANYSET		INX
+HOWMANYFRAMES			LDX #0
+COUNTFRAMES			INX
+				SEC
+				LDA bleftlo
+				SBC #$C0
+				STA bleftlo
+				LDA blefthi
+				SBC #3
+				STA blefthi
+				ORA bleftlo
+				BNE COUNTFRAMES
 				STX FRAMES
 				RTS
 				
