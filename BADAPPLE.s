@@ -144,7 +144,6 @@ CLOSECMD	EQU	$CC						; CLOSE command index
 				LDA #$00
 				STA BLINK						; blinking text? no thanks.
 				STA LORES						; low res graphics mode
-				STA MIXCLR						; For IIGS - bottom 4 lines to GR
 
 				STA PAUSED						; start not paused
 				STA COLORMODE					; start in default, real hardware mode
@@ -159,11 +158,12 @@ DETECTGS
 ISGS			lda #$01						; disable SHR for IIgs
 				sta $c029						; re: John Brooks
 												; need to skip this if on IIe card, otherwise goes to alt ROM
+				STA MIXCLR						; For IIGS - bottom 4 lines to GR
 
 NOTGS			LDA #$30
 				STA DELAY						; start with a modest 30FPS 
 
-				lda SETAN3
+;				lda SETAN3						; *** does something strange to low res
 				sta CLR80VID 					; turn 80 column off
 
 				JSR CLRLORES					; clear screen		
