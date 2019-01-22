@@ -34,6 +34,7 @@ ver_02 = 1
                 allow_subdir = 1        ;set to 1 to allow opening subdirectories to access files
                 might_exist  = 1        ;set to 1 if file is not known to always exist already
                                         ;makes use of status to indicate success or failure
+                many_files   = 1        ;set to 1 to support more than 256 files in a directory
                 allow_aux    = 0        ;set to 1 to allow read/write directly to/from aux memory
                                         ;requires load_high to be set for arbitrary memory access
                                         ;else driver must be running from same memory target
@@ -132,6 +133,9 @@ ver_02 = 1
                 blokhi    = $47         ;ProDOS constant
 
                 entries   = $3f         ;(internal) total number of entries in directory
+!if many_files = 1 {
+                entrieshi = $3b         ;(internal) total number of entries in directory
+} ;many_files
 
 !if mem_swap = 0 {
   !if rwts_mode = 1 {
@@ -726,15 +730,19 @@ unrblockhi = unrelocdsk + (* - reloc)
                 jsr     readdirsel
 
 readdir         ;note that calling this location directly limits subdirectories to 14 entries!
+  !if might_exist = 1 {
+                lda     dirbuf + FILE_COUNT
+                sta     entries
+    !if many_files = 1 {
+                lda     dirbuf + FILE_COUNT + 1
+                sta     entrieshi
+    } ;many_files
+  } ;might_exist
+
                 lda     #NAME_LENGTH + ENTRY_SIZE
 firstent        sta     bloklo
                 lda     #>(dirbuf - 1)
                 sta     blokhi
-
-  !if might_exist = 1 {
-                lda     dirbuf + FILE_COUNT ;assuming only 256 files per subdirectory
-                sta     entries
-  } ;might_exist
 
                 ;there can be only one page crossed, so we can increment here
 
@@ -786,14 +794,22 @@ nextent         ldy     #0
   !if might_exist = 1 {
                 dec     entries
                 bne     +
-  } ;might_exist
-  !if (might_exist + poll_drive) > 0 {
+    !if many_files = 1 {
+                lda     entrieshi
+                bne     ++
+    } ;many_files
+    !if poll_drive = 0 {
 nodisk
 unrdrvoff2 = unrelocdsk + (* - reloc)
                 lda     MOTOROFF
                 inc     status
                 rts
-  } ;might_exist or poll_drive
+    } ;poll_drive
+
+    !if many_files = 1 {
+++              dec     entrieshi
+    } ;many_files
+  } ;might_exist
 
                 ;move to next entry in this block, if possible
 
@@ -2081,15 +2097,19 @@ unrhddblockhi = unrelochdd + (* - reloc)
   } ;enable_floppy
 
 hddreaddir      ;note that calling this location directly limits subdirectories to 14 entries!
+  !if might_exist = 1 {
+                lda     hdddirbuf + FILE_COUNT
+                sta     entries
+    !if many_files = 1 {
+                lda     hdddirbuf + FILE_COUNT + 1
+                sta     entrieshi
+    } ;many_files
+  } ;might_exist
+
                 lda     #NAME_LENGTH + ENTRY_SIZE
 hddfirstent     sta     bloklo
                 lda     #>(hdddirbuf - 1)
                 sta     blokhi
-
-  !if might_exist = 1 {
-                lda     hdddirbuf + FILE_COUNT ;assuming only 256 files per subdirectory
-                sta     entries
-  } ;might_exist
 
                 ;there can be only one page crossed, so we can increment here
 
@@ -2141,8 +2161,16 @@ hddnextent      ldy     #0
   !if might_exist = 1 {
                 dec     entries
                 bne     +
+    !if many_files = 1 {
+                lda     entrieshi
+                bne     ++
+    } ;many_files
                 inc     status
                 rts
+
+    !if many_files = 1 {
+++              dec     entrieshi
+    } ;many_files
   } ;might_exist
 
                 ;move to next entry in this block, if possible
