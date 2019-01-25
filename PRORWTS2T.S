@@ -2646,10 +2646,14 @@ blkidx = * + 1
     !if swap_scrn = 1 {
                 jsr     saveslot
     } ;swap_scrn
+    !if aligned_read = 0 {
+                plp
+                bcs     fewpop
                 pla
                 pla
                 pla
-                pla
+fewpop
+    } ;aligned_read
                 pla
                 pla
                 sec
